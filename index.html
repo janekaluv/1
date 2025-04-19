@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Unlimited Background Remover</title>
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        #original, #result { max-width: 100%; margin-top: 20px; display: none; }
+        #download { margin-top: 10px; display: none; }
+        .container { display: flex; gap: 20px; }
+        .loading { color: #666; font-style: italic; }
+    </style>
+</head>
+<body>
+    <h1>Unlimited Background Remover</h1>
+    <p>Works 100% in your browser - no uploads, no limits!</p>
+    
+    <input type="file" id="upload" accept="image/*">
+    <div id="status" class="loading">Model not loaded yet...</div>
+    
+    <div class="container">
+        <div>
+            <h3>Original</h3>
+            <img id="original">
+        </div>
+        <div>
+            <h3>Result</h3>
+            <canvas id="result"></canvas>
+        </div>
+    </div>
+    
+    <a id="download" href="#" download="no-bg.png">Download Image</a>
+
+    <script>
+        // Model variables
+        let model = null;
+        const MODEL_URL = 'https://github.com/NathanUA/U-2-Net/raw/master/u2net.onnx';
+        
+        // Load model
+        async function loadModel() {
+            document.getElementById('status').textContent = "Loading AI model (≈30MB)...";
+            try {
+                model = await ort.InferenceSession.create(MODEL_URL);
+                document.getElementById('status').textContent = "Model loaded! Upload an image";
+            } catch (e) {
+                document.getElementById('status').textContent = "Error loading model: " + e.message;
+            }
+        }
+        
+        // Process image
+        async function removeBackground(image) {
+            if (!model) return;
+            
+            document.getElementById('status').textContent = "Processing...";
+            
+            // Preprocess image
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const maxSize = 1024;
+            let width = image.width;
+            let height = image.height;
+            
+            if (width > maxSize || height > maxSize) {
+                const ratio = Math.min(maxSize / width, maxSize / height);
+                width *= ratio;
+                height *= ratio;
+            }
+            
+            canvas.width = width;
+            canvas.height = height;
+            ctx.drawImage(image, 0, 0, width, height);
+            
+            // Convert to tensor
+            const imageData = ctx.getImageData(0, 0, width, height);
+            const input = new ort.Tensor('float32', preprocess(imageData), [1, 3, height, width]);
+            
+            // Run model
+            const outputs = await model.run({ input });
+            const mask = outputs.output.data;
+            
+            // Create result
+            const resultCanvas = document.getElementById('result');
+            resultCanvas.width = width;
+            resultCanvas.height = height;
+            const resultCtx = resultCanvas.getContext('2d');
+            
+            // Apply mask
+            applyMask(canvas, resultCanvas, mask);
+            
+            // Show result
+            document.getElementById('original').src = canvas.toDataURL();
+            document.getElementById('original').style.display = 'block';
+            resultCanvas.style.display = 'block';
+            document.getElementById('download').style.display = 'inline-block';
+            document.getElementById('download').href = resultCanvas.toDataURL('image/png');
+            document.getElementById('status').textContent = "Done!";
+        }
+        
+        // Helper functions
+        function preprocess(imageData) {
+            const data = imageData.data;
+            const red = [], green = [], blue = [];
+            
+            for (let i = 0; i < data.length; i += 4) {
+                red.push(data[i] / 255);
+                green.push(data[i + 1] / 255);
+                blue.push(data[i + 2] / 255);
+            }
+            
+            return [...red, ...green, ...blue];
+        }
+        
+        function applyMask(inputCanvas, outputCanvas, mask) {
+            const ctx = outputCanvas.getContext('2d');
+            ctx.drawImage(inputCanvas, 0, 0);
+            
+            const imageData = ctx.getImageData(0, 0, outputCanvas.width, outputCanvas.height);
+            const data = imageData.data;
+            
+            for (let i = 0; i < mask.length; i++) {
+                const alpha = mask[i] > 0.5 ? 255 : 0; // Threshold at 0.5
+                data[i * 4 + 3] = alpha;
+            }
+            
+            ctx.putImageData(imageData, 0, 0);
+        }
+        
+        // Event listeners
+        document.getElementById('upload').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            const img = new Image();
+            img.onload = function() {
+                removeBackground(img);
+            };
+            img.src = URL.createObjectURL(file);
+        });
+        
+        // Initialize
+        loadModel();
+    </script>
+</body>
+</html>
